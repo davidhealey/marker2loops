@@ -9,7 +9,10 @@
 #Second argument is a folder containing wav files
 
 #Ardour session file
-markersFile=$1
+ardourSession=$1
+
+#folder containing wavs
+dir=$2
 
 #get list of wavs
 declare -a wavs
@@ -21,46 +24,49 @@ do
   wavs+=("$entry")
 done
 
-#parse file into array
-markers=($(grep "LOOP START\|LOOP END" "$markersFile" | cut -d '"' -f4 | cut -d '-' -f2))
+#get loop markers
+markStarts=($(grep "LOOP START" "$ardourSession" | cut -d '"' -f6 | cut -d '-' -f2 | cut -d "." -f 1)) #loop marker position in session
+loopStarts=($(grep "LOOP START" "$ardourSession" | cut -d '"' -f4 | cut -d '-' -f2 | cut -d "." -f 1)) #loop start in region
+loopEnds=($(grep "LOOP END" "$ardourSession" | cut -d '"' -f4 | cut -d '-' -f2 | cut -d "." -f 1)) #loop end in region
 
-#write each marker to wav
-start=""
-end=""
-wav=""
-count=0
+#get ranges
+rangeStarts=($(grep "IsRangeMarker" "$ardourSession" | cut -d '"' -f6)) #range start in session
+rangeEnds=($(grep "IsRangeMarker" "$ardourSession" | cut -d '"' -f8)) #range end in session
+rangeNames=($(grep "IsRangeMarker" "$ardourSession" | cut -d '"' -f4)) #range name
 
-for i in "${markers[@]}"
-do
-  if [ -z $start ]
-  then
-  	start=$i
-  else
-  	end=$i
-  fi
-
-  if [ $start ] && [ $end ]
-  then
-	dir=$(dirname "${wavs[$count]}")
- 	file=$(basename "${wavs[$count]}")
- 	echo $file - $start : $end
-
-  	fullPath="${wavs[$count]}"
-  	
-	if [ -z $fullPath ]
+#get region name associated with each loop marker
+for i in "${!markStarts[@]}"
+do  
+  for j in "${!rangeStarts[@]}"
+  do
+	if [ $(("${markStarts[$i]}" > "${rangeStarts[$j]}" && "${markStarts[$i]}" < "${rangeEnds[$j]}")) == 1 ]
 	then
-	  echo "Reached last input file before last loop marker"
+	  name="${rangeNames[$j]}" #range name should be same as wav (or very close) 
+	  start="${loopStarts[$i]}"
+	  end="${loopEnds[$i]}"
+
+	  #get wav file that contains range name
+	  wav=""
+	  for w in "${wavs[@]}"
+	  do
+	  	if [[ $w == *"$name"* ]]
+	  	then
+		  wav=$w
+		  break
+	  	fi
+	  done
+
+	  if [[ -f "$wav" ]] #check the file exists
+	  then
+		echo $wav : $start : $end
+	  
+		./wavesmpl $wav $start $end "$wav-cuepoints"
+
+		#rename the output file, replacing the original, with a safety check to make sure the output was created
+		test -f "$wav-cuepoints" && mv -f "$wav-cuepoints" "$wav"
+	  fi
 	  break
-	fi
-
- 	./wavesmpl $fullPath $start $end "$fullPath-cuepoints"
-
- 	#rename the output file, replacing the original, with a safety check to make sure the output was created
- 	test -f "$fullPath-cuepoints" && mv -f "$fullPath-cuepoints" "$fullPath"
-
-  	unset start
-  	unset end
-  	((count++))
-  fi
-
+	fi	
+  done
+  
 done
